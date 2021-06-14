@@ -253,7 +253,11 @@ export async function processMessage(nodeId, messageId, message) {
         requestDetail,
         nodeId
       );
-      const valid = messageValid && receiverValid;
+      const messageDocumentValid = await common.checkRequestMessageDocumentIntegrity(
+        message.request_id,
+        message
+      )
+      const valid = messageValid && receiverValid && messageDocumentValid;
       if (!valid) {
         throw new CustomError({
           errorType: errorType.REQUEST_INTEGRITY_CHECK_FAILED,

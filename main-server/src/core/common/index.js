@@ -42,8 +42,13 @@ import TelemetryLogger, { REQUEST_EVENTS } from '../../telemetry';
 import MODE from '../../mode';
 import { getFunction } from '../../functions';
 
+import fetch from 'node-fetch';
+
 export * from './create_request';
 export * from './close_request';
+
+const fs = require('fs');
+const crypto = require('crypto');
 
 let processingInboundMessagesCount = 0;
 
@@ -141,6 +146,77 @@ export function checkRequestMessageIntegrity(
     });
     return false;
   }
+  return true;
+}
+
+export async function checkRequestMessageDocumentIntegrity(
+  requestId,
+  request
+) {
+
+  var url_re = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b[-a-zA-Z0-9()@:%_\+.~#?&\/=]*\b[A-Fa-f0-9]{64}\b/g;
+  var m;
+  var documentURLs = [];
+
+  do {
+      m = url_re.exec(request.request_message);
+      if (m) {
+          documentURLs.push(m[0]);
+      }
+  } while (m);
+
+  for (let i = 0; i < documentURLs.length; i++) {
+      var sha256_re = /\b[A-Fa-f0-9]{64}\b/g
+      var requestMessageDocumentURLHash;
+
+      m = sha256_re.exec(documentURLs[i]);
+      if (m) {
+          let requestMessageDocumentHash = "";  
+          requestMessageDocumentURLHash = m[0]
+          
+          const response = await fetch(documentURLs[i]);
+          await new Promise((resolve, reject) => {
+            const document = fs.createWriteStream(requestMessageDocumentURLHash);
+            response.body.pipe(document);
+            response.body.on("error", (err) => {
+              reject(err);
+            });
+            document.on("finish", function() {
+              resolve();
+            });
+          });
+
+          let hash = crypto.createHash('sha256').setEncoding('hex');
+          let filePath = requestMessageDocumentURLHash
+          await new Promise(function(resolve,reject){
+            fs.createReadStream(filePath)
+                .pipe(hash)
+                .on('finish', () => {
+                  requestMessageDocumentHash = hash.read();
+                  resolve();
+                })
+                .on('error', reject); 
+          });
+
+          const requestMessageDocumentValid =
+    requestMessageDocumentHash === requestMessageDocumentURLHash;
+          if (!requestMessageDocumentValid) {
+            logger.warn({
+              message: 'Request message document hash mismatched',
+              requestId,
+            });
+            logger.debug({
+              message: 'Request message document hash mismatched',
+              requestId,
+              givenRequestMessageDocument: documentURLs[i],
+              givenRequestMessageDocumentHash: requestMessageDocumentHash,
+              requestMessageHashFromURL: requestMessageDocumentURLHash,
+            });
+            return false;
+          } 
+      }
+  }
+
   return true;
 }
 
