@@ -154,70 +154,67 @@ export async function checkRequestMessageDocumentIntegrity(
   request
 ) {
 
-  var url_re = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b[-a-zA-Z0-9()@:%_\+.~#?&\/=]*\b[A-Fa-f0-9]{64}\b/g;
-  var m;
-  var documentURLs = [];
+  let integrity = true;
+  let urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b[-a-zA-Z0-9()@:%_\+.~#?&\/=]*\b[A-Fa-f0-9]{64}\b/g;
+  let m;
+  let documentURLs = [];
 
   do {
-      m = url_re.exec(request.request_message);
+      m = urlRegex.exec(request.request_message);
       if (m) {
           documentURLs.push(m[0]);
       }
   } while (m);
 
-  for (let i = 0; i < documentURLs.length; i++) {
-      var sha256_re = /\b[A-Fa-f0-9]{64}\b/g
-      var requestMessageDocumentURLHash;
+  await Promise.all(documentURLs.map(documentURL => (async () => {
+    let sha256Regex = /\b[A-Fa-f0-9]{64}\b/g
+    let requestMessageDocumentURLHash;
 
-      m = sha256_re.exec(documentURLs[i]);
-      if (m) {
-          let requestMessageDocumentHash = "";  
-          requestMessageDocumentURLHash = m[0]
-          
-          const response = await fetch(documentURLs[i]);
-          await new Promise((resolve, reject) => {
-            const document = fs.createWriteStream(requestMessageDocumentURLHash);
-            response.body.pipe(document);
-            response.body.on("error", (err) => {
-              reject(err);
-            });
-            document.on("finish", function() {
+    m = sha256Regex.exec(documentURL);
+    if (m) {
+      let requestMessageDocumentHash = "";
+      requestMessageDocumentURLHash = m[0]
+
+      let hash = crypto.createHash('sha256').setEncoding('hex');
+      await fetch(documentURL)
+      .then(
+        res =>
+          new Promise((resolve, reject) => {
+            res.body.pipe(hash);
+            res.body.on("end", function() {
+              requestMessageDocumentHash = hash.read();
               resolve();
             });
-          });
+            hash.on("error", reject);
+          })
+      )
 
-          let hash = crypto.createHash('sha256').setEncoding('hex');
-          let filePath = requestMessageDocumentURLHash
-          await new Promise(function(resolve,reject){
-            fs.createReadStream(filePath)
-                .pipe(hash)
-                .on('finish', () => {
-                  requestMessageDocumentHash = hash.read();
-                  resolve();
-                })
-                .on('error', reject); 
+      const requestMessageDocumentValid =
+        requestMessageDocumentHash === requestMessageDocumentURLHash;
+        if (!requestMessageDocumentValid) {
+          logger.warn({
+            message: 'Request message document hash mismatched',
+            requestId,
           });
-
-          const requestMessageDocumentValid =
-    requestMessageDocumentHash === requestMessageDocumentURLHash;
-          if (!requestMessageDocumentValid) {
-            logger.warn({
-              message: 'Request message document hash mismatched',
-              requestId,
-            });
-            logger.debug({
-              message: 'Request message document hash mismatched',
-              requestId,
-              givenRequestMessageDocument: documentURLs[i],
-              givenRequestMessageDocumentHash: requestMessageDocumentHash,
-              requestMessageHashFromURL: requestMessageDocumentURLHash,
-            });
-            return false;
-          } 
+          logger.debug({
+            message: 'Request message document hash mismatched',
+            requestId,
+            givenRequestMessageDocument: documentURL,
+            givenRequestMessageDocumentHash: requestMessageDocumentHash,
+            requestMessageHashFromURL: requestMessageDocumentURLHash,
+          });
+          return false;
+        }
       }
-  }
+      return true;
+  })()))
+  .then( results => {
+    results.forEach(documentIntegrity => {
+      integrity &= documentIntegrity;
+    })
+  });
 
-  return true;
+  return integrity;
 }
 
 export function getHandleMessageQueueErrorFn(getErrorCallbackUrlFnName) {
