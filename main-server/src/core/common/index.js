@@ -154,7 +154,6 @@ export async function checkRequestMessageDocumentIntegrity(
   request
 ) {
 
-  let integrity = true;
   let urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b[-a-zA-Z0-9()@:%_\+.~#?&\/=]*\b[A-Fa-f0-9]{64}\b/g;
   let m;
   let documentURLs = [];
@@ -166,28 +165,24 @@ export async function checkRequestMessageDocumentIntegrity(
       }
   } while (m);
 
-  await Promise.all(documentURLs.map(documentURL => (async () => {
-    let sha256Regex = /\b[A-Fa-f0-9]{64}\b/g
-    let requestMessageDocumentURLHash;
+  const results = await Promise.all(documentURLs.map(documentURL => (async () => {
+    const sha256Regex = /\b[A-Fa-f0-9]{64}\b/g
 
     m = sha256Regex.exec(documentURL);
     if (m) {
       let requestMessageDocumentHash = "";
-      requestMessageDocumentURLHash = m[0]
+      const requestMessageDocumentURLHash = m[0]
 
       let hash = crypto.createHash('sha256').setEncoding('hex');
-      await fetch(documentURL)
-      .then(
-        res =>
-          new Promise((resolve, reject) => {
-            res.body.pipe(hash);
-            res.body.on("end", function() {
-              requestMessageDocumentHash = hash.read();
-              resolve();
-            });
-            hash.on("error", reject);
-          })
-      )
+      const document = await fetch(documentURL)
+      await new Promise((resolve, reject) => {
+        document.body.pipe(hash);
+        document.body.on("end", function() {
+          requestMessageDocumentHash = hash.read();
+          resolve();
+        });
+        hash.on("error", reject);
+      })
 
       const requestMessageDocumentValid =
         requestMessageDocumentHash === requestMessageDocumentURLHash;
@@ -208,11 +203,8 @@ export async function checkRequestMessageDocumentIntegrity(
       }
       return true;
   })()))
-  .then( results => {
-    results.forEach(documentIntegrity => {
-      integrity &= documentIntegrity;
-    })
-  });
+
+  const integrity = results.every(v => v);
 
   return integrity;
 }
